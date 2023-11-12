@@ -1,16 +1,14 @@
-name: mdet
+name: inrl
 channels:
   - conda-forge
 dependencies:
   - python=3.9
-  - pytorch-gpu==1.10.1
-  - torchvision==0.11.2
-  - cudatoolkit=11.3
+  - pytorch==1.13
+  - torchvision==0.14
   - pandas
   - omegaconf
   - tqdm
   - opencv
-  - tensorflow
   - humanfriendly
   - ca-certificates
   - certifi
@@ -18,3 +16,6 @@ dependencies:
   - matplotlib
   - jsonpickle
   - seaborn
+  - ultralytics
+  - Pillow
+  - cudnn

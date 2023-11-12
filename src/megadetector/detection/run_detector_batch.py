@@ -58,9 +58,11 @@ from functools import partial
 from multiprocessing import Process
 from multiprocessing.pool import Pool as workerpool
 from threading import Thread
+import pandas as pd
 
 import humanfriendly
 from tqdm import tqdm
+from PIL import Image, ImageDraw
 
 # Number of images to pre-fetch
 max_queue_size = 10
@@ -120,7 +122,7 @@ def producer_func(q,image_files):
     print('Finished image loading'); sys.stdout.flush()
 
 
-def consumer_func(q,return_queue,model_file,confidence_threshold,image_size=None):
+def consumer_func(q,return_queue,model_file,confidence_threshold,image_size=None,folders=None):
     """
     Consumer function; only used when using the (optional) image queue.
 
@@ -158,14 +160,14 @@ def consumer_func(q,return_queue,model_file,confidence_threshold,image_size=None
             sys.stdout.flush()
         results.append(process_image(im_file=im_file,detector=detector,
                                      confidence_threshold=confidence_threshold,
-                                     image=image,quiet=True,image_size=image_size))
+                                     image=image,quiet=True,image_size=image_size,folders=folders))
         if verbose:
             print('Processed image {}'.format(im_file)); sys.stdout.flush()
         q.task_done()
 
 
 def run_detector_with_image_queue(image_files,model_file,confidence_threshold,
-                                  quiet=False,image_size=None):
+                                  quiet=False,image_size=None,folders=None):
     """
     Driver function for the (optional) multiprocessing-based image queue; only used when --use_image_queue
     is specified.  Starts a reader process to read images from disk, but processes images in the
@@ -196,14 +198,14 @@ def run_detector_with_image_queue(image_files,model_file,confidence_threshold,
     if run_separate_consumer_process:
         if use_threads_for_queue:
             consumer = Thread(target=consumer_func,args=(q,return_queue,model_file,
-                                                         confidence_threshold,image_size,))
+                                                         confidence_threshold,image_size,folders))
         else:
             consumer = Process(target=consumer_func,args=(q,return_queue,model_file,
-                                                          confidence_threshold,image_size,))
+                                                          confidence_threshold,image_size,folders))
         consumer.daemon = True
         consumer.start()
     else:
-        consumer_func(q,return_queue,model_file,confidence_threshold,image_size)
+        consumer_func(q,return_queue,model_file,confidence_threshold,image_size,folders)
 
     producer.join()
     print('Producer finished')
@@ -237,7 +239,7 @@ def chunks_by_number_of_chunks(ls, n):
 #%% Image processing functions
 
 def process_images(im_files, detector, confidence_threshold, use_image_queue=False,
-                   quiet=False, image_size=None):
+                   quiet=False, image_size=None,folders=None):
     """
     Runs MegaDetector over a list of image files.
 
@@ -250,7 +252,6 @@ def process_images(im_files, detector, confidence_threshold, use_image_queue=Fal
     - results: list of dict, each dict represents detections on one image
         see the 'images' key in https://github.com/microsoft/CameraTraps/tree/master/api/batch_processing#batch-processing-api-output-format
     """
-
     if isinstance(detector, str):
         start_time = time.time()
         detector = load_detector(detector)
@@ -259,17 +260,17 @@ def process_images(im_files, detector, confidence_threshold, use_image_queue=Fal
 
     if use_image_queue:
         run_detector_with_image_queue(im_files, detector, confidence_threshold,
-                                      quiet=quiet, image_size=image_size)
+                                      quiet=quiet, image_size=image_size,folders=folders)
     else:
         results = []
         for im_file in im_files:
             results.append(process_image(im_file, detector, confidence_threshold,
-                                         quiet=quiet, image_size=image_size))
+                                         quiet=quiet, image_size=image_size, folders=folders))
         return results
 
 
 def process_image(im_file, detector, confidence_threshold, image=None,
-                  quiet=False, image_size=None):
+                  quiet=False, image_size=None,folders=None):
     """
     Runs MegaDetector over a single image file.
 
@@ -299,17 +300,55 @@ def process_image(im_file, detector, confidence_threshold, image=None,
             }
             return result
 
+    #try:
+    #image_size = image.size
+    #print(image_size)
+    result, object, bbox  = detector.generate_detections_one_image(
+        image, im_file, detection_threshold=confidence_threshold, image_size=image_size)
+    #print(folders)
     try:
-        result = detector.generate_detections_one_image(
-            image, im_file, detection_threshold=confidence_threshold, image_size=image_size)
+        if object > 0 :  
+            folder = os.path.dirname(folders)+"/"
+            new_folder = im_file.replace(folder,"").replace(".JPG","_bb.JPG")
+            ex_file =os.path.basename(new_folder)
+            new_file = folder + new_folder.replace("/","_out/")
+            draw = ImageDraw.Draw(image)
+            for b in bbox:
+                image_width, image_height = image.size
+                image_bbox = [
+                        b[0] * image_width,  # x0
+                        b[1] * image_height, # y0
+                        (b[0]+b[2]) * image_width,  # x1
+                        (b[1]+b[3]) * image_height  # y1
+                        ]
+                draw.rectangle(image_bbox, outline='red')
+            
+            if os.path.exists(new_file):
+                print(f"{new_file} is exists")
+            else:
+                print(new_file)
+                image.save(new_file)
     except Exception as e:
+        object = 0
+    exif_data = image._getexif()
+    date, time = exif_data[36867].split(' ')
+    result["Date"] = date
+    result["Time"] = time
+    result["Make"] = exif_data[271]
+    result["object"] = object
+    try:
+        if object > 0 :  
+            result["extract_file"] = ex_file
+    except Exception as e:
+        result["extract_file"] = ""
+    """except Exception as e:
         if not quiet:
             print('Image {} cannot be processed. Exception: {}'.format(im_file, e))
         result = {
             'file': im_file,
             'failure': FAILURE_INFER
         }
-        return result
+        return result"""
 
     return result
 
@@ -319,7 +358,8 @@ def process_image(im_file, detector, confidence_threshold, image=None,
 def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=None,
                                 confidence_threshold=DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD,
                                 checkpoint_frequency=-1, results=None, n_cores=0,
-                                use_image_queue=False, quiet=False, image_size=None):
+                                use_image_queue=False, quiet=False, image_size=None,
+                                folders=None):
     """
     Args
     - model_file: str, path to .pb model file
@@ -380,7 +420,7 @@ def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=No
         assert n_cores <= 1
         results = run_detector_with_image_queue(image_file_names, model_file,
                                                 confidence_threshold, quiet,
-                                                image_size=image_size)
+                                                image_size=image_size,folders=folders)
 
     elif n_cores <= 1:
 
@@ -405,7 +445,7 @@ def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=No
 
             result = process_image(im_file, detector,
                                    confidence_threshold, quiet=quiet,
-                                   image_size=image_size)
+                                   image_size=image_size, forders=folders)
             results.append(result)
 
             # Write a checkpoint if necessary
@@ -446,7 +486,7 @@ def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=No
 
         image_batches = list(chunks_by_number_of_chunks(image_file_names, n_cores))
         results = pool.map(partial(process_images, detector=detector,
-                                   confidence_threshold=confidence_threshold,image_size=image_size),
+                                   confidence_threshold=confidence_threshold,image_size=image_size,folders=folders),
                            image_batches)
 
         results = list(itertools.chain.from_iterable(results))
@@ -501,6 +541,12 @@ def write_results_to_file(results, output_file, relative_path_base=None,
         if detector_file is not None:
 
             print('Warning (write_results_to_file): info struct and detector file supplied, ignoring detector file')
+
+    results_dataframe = pd.DataFrame(results)
+    results_dataframe_object = results_dataframe[results_dataframe['object'] > 0]
+    results_dataframe_object = results_dataframe_object.drop('max_detection_conf', axis=1)
+    results_dataframe_object.to_csv(relative_path_base + "_out/" + os.path.basename(relative_path_base) + "_output.csv", index=True)
+    print('Output csv file saved at detector_output.csv')
 
     final_output = {
         'images': results,
@@ -724,7 +770,7 @@ def main():
                                           n_cores=args.ncores,
                                           use_image_queue=args.use_image_queue,
                                           quiet=args.quiet,
-                                          image_size=args.image_size)
+                                          image_size=args.image_size, folders=folders)
 
     elapsed = time.time() - start_time
     print('Finished inference for {} images in {}'.format(

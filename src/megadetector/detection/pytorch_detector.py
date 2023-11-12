@@ -10,13 +10,14 @@ import numpy as np
 
 from detection.run_detector import CONF_DIGITS, COORD_DIGITS, FAILURE_INFER
 import ct_utils
-
 try:
-    # import pre- and post-processing functions from the YOLOv5 repo https://github.com/ultralytics/yolov5
-    from utils.general import non_max_suppression, scale_coords, xyxy2xywh
-    from utils.augmentations import letterbox
-except ModuleNotFoundError:
-    raise ModuleNotFoundError('Could not import YOLOv5 functions.')
+    from utils.general import scale_coords
+except ImportError:        
+    from utils.general import scale_boxes as scale_coords
+
+# import pre- and post-processing functions from the YOLOv5 repo https://github.com/ultralytics/yolov5
+from utils.general import non_max_suppression, xyxy2xywh
+from utils.augmentations import letterbox
 
 print(f'Using PyTorch version {torch.__version__}')
 
@@ -39,6 +40,7 @@ class PTDetector:
             except AttributeError:
                 pass
         self.model = PTDetector._load_model(model_path, self.device)
+        
         if (self.device != 'cpu'):
             print('Sending model to GPU')
             self.model.to(self.device)
@@ -72,89 +74,95 @@ class PTDetector:
         }
         detections = []
         max_conf = 0.0
+        object = 0
+        
 
-        try:
-            img_original = np.asarray(img_original)
+        #try:
+        img_original = np.asarray(img_original)
 
-            # padded resize
-            target_size = PTDetector.IMAGE_SIZE
+        # padded resize
+        target_size = PTDetector.IMAGE_SIZE
+        
+        # Image size can be an int (which translates to a square target size) or (h,w)
+        if image_size is not None:
             
-            # Image size can be an int (which translates to a square target size) or (h,w)
-            if image_size is not None:
-                
-                assert isinstance(image_size,int) or (len(image_size)==2)
-                
-                if not self.printed_image_size_warning:
-                    print('Warning: using user-supplied image size {}'.format(image_size))
-                    self.printed_image_size_warning = True
+            assert isinstance(image_size,int) or (len(image_size)==2)
             
-                target_size = image_size
+            if not self.printed_image_size_warning:
+                print('Warning: using user-supplied image size {}'.format(image_size))
+                self.printed_image_size_warning = True
+        
+            target_size = image_size
+        
+        else:
             
-            else:
-                
-                self.printed_image_size_warning = False
-                
-            # ...if the caller has specified an image size
+            self.printed_image_size_warning = False
             
-            img = letterbox(img_original, new_shape=target_size,
-                                 stride=PTDetector.STRIDE, auto=True)[0]  # JIT requires auto=False
-            
-            img = img.transpose((2, 0, 1))  # HWC to CHW; PIL Image is RGB already
-            img = np.ascontiguousarray(img)
-            img = torch.from_numpy(img)
-            img = img.to(self.device)
-            img = img.float()
-            img /= 255
+        # ...if the caller has specified an image size
+        
+        img = letterbox(img_original, new_shape=target_size,
+                                stride=PTDetector.STRIDE, auto=True)[0]  # JIT requires auto=False
+        
+        img = img.transpose((2, 0, 1))  # HWC to CHW; PIL Image is RGB already
+        img = np.ascontiguousarray(img)
+        img = torch.from_numpy(img)
+        img = img.to(self.device)
+        img = img.float()
+        img /= 255
 
-            if len(img.shape) == 3:  # always true for now, TODO add inference using larger batch size
-                img = torch.unsqueeze(img, 0)
+        if len(img.shape) == 3:  # always true for now, TODO add inference using larger batch size
+            img = torch.unsqueeze(img, 0)
 
-            pred: list = self.model(img)[0]
+        pred: list = self.model(img)[0]
 
-            # NMS
-            if self.device == 'mps':
-                # Current v1.13.0.dev20220824 torchvision::nms is not current implemented for the MPS device
-                # Send pred back to cpu to fix
-                pred = non_max_suppression(prediction=pred.cpu(), conf_thres=detection_threshold)
-            else: 
-                pred = non_max_suppression(prediction=pred, conf_thres=detection_threshold)
+        # NMS
+        if self.device == 'mps':
+            # Current v1.13.0.dev20220824 torchvision::nms is not current implemented for the MPS device
+            # Send pred back to cpu to fix
+            pred = non_max_suppression(prediction=pred.cpu(), conf_thres=detection_threshold)
+        else: 
+            pred = non_max_suppression(prediction=pred, conf_thres=detection_threshold)
 
-            # format detections/bounding boxes
-            gn = torch.tensor(img_original.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+        # format detections/bounding boxes
+        gn = torch.tensor(img_original.shape)[[1, 0, 1, 0]]  # normalization gain whwh
 
-            for det in pred:
-                if len(det):
-                    # Rescale boxes from img_size to im0 size
-                    det[:, :4] = scale_coords(img.shape[2:], det[:, :4], img_original.shape).round()
+        for det in pred:
+            bbox = []
+            if len(det):
+                object = len(det)
+                # Rescale boxes from img_size to im0 size
+                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], img_original.shape).round()
 
-                    for *xyxy, conf, cls in reversed(det):
-                        # normalized center-x, center-y, width and height
-                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
+                for *xyxy, conf, cls in reversed(det):
+                    # normalized center-x, center-y, width and height
+                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
 
-                        api_box = ct_utils.convert_yolo_to_xywh(xywh)
+                    api_box = ct_utils.convert_yolo_to_xywh(xywh)
 
-                        conf = ct_utils.truncate_float(conf.tolist(), precision=CONF_DIGITS)
+                    conf = ct_utils.truncate_float(conf.tolist(), precision=CONF_DIGITS)
 
-                        # MegaDetector output format's categories start at 1, but this model's start at 0
-                        cls = int(cls.tolist()) + 1
-                        if cls not in (1, 2, 3):
-                            raise KeyError(f'{cls} is not a valid class.')
+                    # MegaDetector output format's categories start at 1, but this model's start at 0
+                    cls = int(cls.tolist()) + 1
+                    if cls not in (1, 2, 3):
+                        raise KeyError(f'{cls} is not a valid class.')
+                    
+                    bbox.append(ct_utils.truncate_float_array(api_box, precision=COORD_DIGITS))
 
-                        detections.append({
-                            'category': str(cls),
-                            'conf': conf,
-                            'bbox': ct_utils.truncate_float_array(api_box, precision=COORD_DIGITS)
-                        })
-                        max_conf = max(max_conf, conf)
+                    detections.append({
+                        'category': str(cls),
+                        'conf': conf,
+                        'bbox': ct_utils.truncate_float_array(api_box, precision=COORD_DIGITS)
+                    })
+                    max_conf = max(max_conf, conf)
 
-        except Exception as e:
+        """except Exception as e:
             result['failure'] = FAILURE_INFER
-            print('PTDetector: image {} failed during inference: {}'.format(image_id, str(e)))
+            print('PTDetector: image {} failed during inference: {}'.format(image_id, str(e)))"""
 
         result['max_detection_conf'] = max_conf
         result['detections'] = detections
 
-        return result
+        return result, object, bbox
 
 
 if __name__ == '__main__':

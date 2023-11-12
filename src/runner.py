@@ -28,6 +28,7 @@ class Runner:
         self,
         config: RootConfig,
         session_tag: Union[SessionTag, list[SessionTag], str, list[str]],
+        folders = None
     ) -> None:
         self.__check_config(config)
         if isinstance(session_tag, (str, list)):
@@ -51,8 +52,9 @@ class Runner:
         self.logger = get_logger(out_dir=self.logdir, logname=f"{session_tag}.log")
         OmegaConf.save(config=config, f=self.logdir.joinpath("config.raw.yaml"))
         self.config = config
-
-    def exec_mdet(self, config: MDetConfig) -> None:
+        self.folders = folders
+        
+    def exec_mdet(self, config: MDetConfig, folders) -> None:
         input_file_path = config.image_source if config.image_source.is_file() else None
         output_file_path = (
             config.image_source
@@ -61,7 +63,7 @@ class Runner:
         ).joinpath("detector_output.json")
         self.logger.info(f"Start {config.image_source} MegaDetector Detection...")
         self.logger.info(f"Output file: {output_file_path}")
-        run_megadetector(detector_config=config)
+        run_megadetector(detector_config=config,folders=folders)
         self.logger.info("Detection Complete")
         shutil.copyfile(
             str(output_file_path), str(self.logdir.joinpath(output_file_path.name))
@@ -175,11 +177,12 @@ class Runner:
         self,
         config: RootConfig,
         session_tag: SessionTag,
+        folders = None
     ) -> None:
         self.logger.info(session_tag)
         if session_tag == SessionTag.MDet:
             if config.mdet_config is not None:
-                self.exec_mdet(config=config.mdet_config)
+                self.exec_mdet(config=config.mdet_config,folders=folders)
         elif session_tag == SessionTag.MDetCrop:
             if config.mdet_crop_config is not None:
                 self.exec_mdet_crop(config=config.mdet_crop_config)
@@ -201,7 +204,7 @@ class Runner:
 
         with Timer(verbose=True, logger=self.logger, timer_tag="AllProcess"):
             for session_tag in self.session_tags:
-                self.__exec_session(config=self.config, session_tag=session_tag)
+                self.__exec_session(config=self.config, session_tag=session_tag,folders=self.folders)
                 exec_list[session_tag] = True
 
         exec_config = self.__drop_config(config=self.config, exec_list=exec_list)

@@ -29,6 +29,7 @@ logger = getLogger(__file__)
 def run_megadetector(
     detector_config: MDetConfig,
     output_json_name: str = "detector_output.json",
+    folders=None,
 ) -> None:
     image_source: Path = detector_config.image_source
     image_data_dir = image_source if image_source.is_dir() else image_source.parent
@@ -100,6 +101,7 @@ def run_megadetector(
             n_cores=detector_config.ncores,
             use_image_queue=True,
             quiet=not detector_config.verbose,
+            folders=folders
         )
 
     logger.info(f"Finished inference for {len(results)} images.")
