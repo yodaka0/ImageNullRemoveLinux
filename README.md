@@ -50,7 +50,6 @@ This program aims to detect wildlife from camera trap images using [MegaDetector
     ```commandprompt 
     conda install mamba -c conda-forge
     ```
-    (powershell では出来ない。相性が悪い？)
 
     condaのパスを通す
     システム環境変数の編集->環境変数->PATH->新規->condaのpathをコピペ
@@ -67,7 +66,7 @@ This program aims to detect wildlife from camera trap images using [MegaDetector
 2. Move Project Directory：プロジェクトディレクトリへ移動
 
     ```commandprompt
-    cd {ImageNullRemoveWin-masterのパス}
+    cd {ImageNullRemoveLinux-masterのパス}
     ```
 
 3. create conda environment：conda環境の構築
@@ -76,23 +75,14 @@ This program aims to detect wildlife from camera trap images using [MegaDetector
     mamba env create -f environment.yml
     ```
     
-4. 以下のサイトを見てバージョンを合わせたものをインストールする(if use gpu)
-    CUDA Toolkit 12.3 Downloads
-    https://developer.nvidia.com/cuda-downloads 
 
-    cudnnのインストール(ログインが必要)
-    https://developer.nvidia.com/rdp/cudnn-download
-
-    (必要なら)
-    https://pytorch.org/ 
-    例　conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
   
 <br />
 
-5. Download MegaDetector weight file：MegaDetectorの重みファイルのダウンロード
+4. Download MegaDetector weight file：MegaDetectorの重みファイルのダウンロード
 
     https://github.com/microsoft/CameraTraps/releases/tag/v5.0
-    からmd_v5a.0.0.ptをダウンロード後、ImageNullRemoveWin\models　内に移動させる
+    からmd_v5a.0.0.ptをダウンロード後、ImageNullRemoveLinux\models　内に移動させる
 
 
 ---
@@ -104,7 +94,7 @@ This program aims to detect wildlife from camera trap images using [MegaDetector
 0. ディレクトリの移動
 
     ```commandprompt
-    cd {ImageNullRemoveWin-masterのパス}
+    cd {ImageNullRemoveLinux-masterのパス}
     ```
     
 1. conda環境のアクティベート
