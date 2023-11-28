@@ -308,7 +308,7 @@ def process_image(im_file, detector, confidence_threshold, image=None,
         ex_file =os.path.basename(new_folder)
         new_file = folder + new_folder.replace("/","_out/")
         if os.path.exists(new_file):
-            print(f"{new_file} is exists")
+            print(f"{new_file} exists")
             object = 1
             result = {
                 'file': im_file,
